@@ -1,0 +1,668 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>KarmaZa Bingo</title>
+<style>
+body{
+    margin:0;
+    background:#000;
+    display:flex;
+    justify-content:center;
+    padding:20px;
+}
+
+#wrap{
+    position:relative;
+    display:inline-block;
+}
+
+#board{
+    display:block;
+    max-width:100%;
+    height:auto;
+}
+
+.tile{
+    position:absolute;
+    cursor:pointer;
+    box-sizing:border-box;
+}
+
+.resize-handle{
+    display:none;
+    position:absolute;
+    width:12px;
+    height:12px;
+    right:-6px;
+    bottom:-6px;
+    background:#fff;
+    border:1px solid #000;
+    cursor:nwse-resize;
+    z-index:5;
+}
+
+.admin-mode .resize-handle{
+    display:block;
+}
+
+.admin-mode .tile{
+    outline:2px dashed rgba(255,255,255,0.5);
+}
+
+.tile.selected{
+    outline:3px solid #00ff88 !important;
+    z-index:10;
+}
+
+.tile.multi-selected{
+    outline:3px solid #ffcc00 !important;
+    z-index:11;
+}
+
+.tile.pasted-flash{
+    animation: pastedFlash 0.7s ease;
+}
+
+@keyframes pastedFlash{
+    0%{ box-shadow:0 0 0px #fff; }
+    50%{ box-shadow:0 0 18px #00ff88; }
+    100%{ box-shadow:0 0 0px #fff; }
+}
+
+.tile::before,
+.tile::after{
+    content:"";
+    position:absolute;
+    top:0;
+    height:100%;
+    pointer-events:none;
+}
+
+.tile::before{
+    left:0;
+    width:0%;
+    background:rgba(220,50,50,.45);
+}
+
+.tile::after{
+    right:0;
+    width:0%;
+    background:rgba(70,110,255,.45);
+}
+
+.tile.red::before{
+    width:100%;
+}
+
+.tile.blue::after{
+    width:100%;
+}
+
+.tile.split::before{
+    width:50%;
+}
+
+.tile.split::after{
+    width:50%;
+}
+
+.tile:hover{
+    outline:2px solid rgba(255,255,255,.35);
+}
+</style>
+</head>
+<body>
+<button id="adminToggle" style="position:fixed;top:8px;right:8px;z-index:10000;opacity:0.08;background:#000;color:#fff;border:1px solid #333;padding:4px 8px;cursor:pointer;">ADMIN</button>
+<div id="adminPanel" style="display:none;position:fixed;top:10px;left:10px;background:#111;padding:12px;border:1px solid #555;color:white;font-family:Arial;z-index:9999;">
+  <p>ADMIN DRAW MODE ENABLED</p>
+  <p>Drag tiles to reposition them.</p>
+  <button onclick="saveLayout()">Save Layout</button>
+  <button onclick="loadLayout()">Load Layout</button>
+  <button onclick="copyTile()">Copy Selected Tile</button>
+  <button onclick="pasteTile()">Paste Tile Size</button>
+  <button onclick="deleteTile()">Delete Selected Tile</button>
+  <button onclick="createGridFromTile()">Create 5x5 Grid From Selected</button>
+  <button onclick="toggleSnapMode()">Toggle Snap Mode</button>
+  <button onclick="deleteHighlightedTiles()">Delete Highlighted Tiles</button>
+</div>
+<div id="wrap">
+    <img src="karmaza-board.png" id="board">
+</div>
+<script>
+const wrap = document.getElementById("wrap");
+const board = document.getElementById("board");
+
+let startX = 36;
+let startY = 104;
+let tileW = 60;
+let tileH = 60;
+let gap = 24;
+const naturalWidth = 602;
+const naturalHeight = 614;
+
+function createTiles(){
+
+    document.querySelectorAll('.tile').forEach(t => t.remove());
+
+    const scaleX = board.clientWidth / naturalWidth;
+    const scaleY = board.clientHeight / naturalHeight;
+
+    for(let row=0; row<5; row++){
+        for(let col=0; col<5; col++){
+
+            const tile = document.createElement("div");
+            tile.className = "tile";
+
+            const handle = document.createElement('div');
+            handle.className = 'resize-handle';
+            tile.appendChild(handle);
+
+            tile.style.left = `${(startX + (col * (tileW + gap))) * scaleX}px`;
+            tile.style.top = `${(startY + (row * (tileH + gap))) * scaleY}px`;
+            tile.style.width = `${tileW * scaleX}px`;
+            tile.style.height = `${tileH * scaleY}px`;
+
+            tile.dataset.state = 0;
+
+            tile.addEventListener("mousedown", (e)=>{
+
+                if(adminMode){
+
+                    if(e.target.classList.contains('resize-handle')){
+                        resizingTile = tile;
+                        e.stopPropagation();
+                        return;
+                    }
+
+                    document.querySelectorAll('.tile').forEach(t => t.classList.remove('selected'));
+                    selectedTile = tile;
+                    selectedTile.classList.add('selected');
+                    draggingTile = tile;
+                    dragOffsetX = e.offsetX;
+                    dragOffsetY = e.offsetY;
+                    return;
+                }
+
+            });
+
+            tile.addEventListener("click", (e)=>{
+
+                // In admin mode, clicking only selects tiles
+                if(adminMode){
+                    e.stopPropagation();
+
+                    document.querySelectorAll('.tile').forEach(t => t.classList.remove('selected'));
+                    selectedTile = tile;
+                    selectedTile.classList.add('selected');
+                    return;
+                }
+
+
+                let s = Number(tile.dataset.state);
+                s = (s + 1) % 4;
+                tile.dataset.state = s;
+
+                tile.classList.remove("red","blue","split");
+
+                if(s === 1){
+                    tile.classList.add("red");
+                }
+                else if(s === 2){
+                    tile.classList.add("blue");
+                }
+                else if(s === 3){
+                    tile.classList.add("split");
+                }
+            });
+
+            wrap.appendChild(tile);
+        }
+    }
+}
+
+
+
+let adminMode = false;
+let draggingTile = null;
+let resizingTile = null;
+let dragOffsetX = 0;
+let dragOffsetY = 0;
+let selectedTile = null;
+let highlightedTiles = [];
+let copiedTileData = null;
+let gridContainer = null;
+let draggingGrid = false;
+let snapMode = true;
+
+function toggleAdmin(){
+
+    const pass = prompt('Enter Admin Passcode');
+
+    if(pass === '6501'){
+        adminMode = !adminMode;
+        document.getElementById('adminPanel').style.display = adminMode ? 'block' : 'none';
+        document.body.classList.toggle('admin-mode', adminMode);
+    }
+}
+
+document.getElementById('adminToggle').addEventListener('click', toggleAdmin);
+
+window.addEventListener('keydown', (e)=>{
+
+    if(e.key === 'a'){
+        toggleAdmin();
+    }
+
+    if(!adminMode) return;
+
+    // Copy selected tile size
+    if(e.key === 'c'){
+        e.preventDefault();
+        copyTile();
+    }
+
+    // Paste tile size
+    if(e.key === 'v'){
+        e.preventDefault();
+        pasteTile();
+    }
+
+    // Delete selected tile
+    if(e.key === 'Delete'){
+        e.preventDefault();
+        deleteTile();
+    }
+
+    // Quick duplicate right
+    if(e.key === 'd'){
+        duplicateTileRight();
+    }
+
+    // Quick duplicate down
+    if(e.key === 's'){
+        duplicateTileDown();
+    }
+
+    // Escape exits admin mode
+    if(e.key === 'Escape'){
+        adminMode = false;
+        document.getElementById('adminPanel').style.display = 'none';
+        document.body.classList.remove('admin-mode');
+    }
+});
+
+window.addEventListener('mousemove', (e)=>{
+
+    const rect = wrap.getBoundingClientRect();
+
+    if(draggingTile){
+
+        let newLeft = e.clientX - rect.left - dragOffsetX;
+        let newTop = e.clientY - rect.top - dragOffsetY;
+
+        if(snapMode){
+            newLeft = Math.round(newLeft / 2) * 2;
+            newTop = Math.round(newTop / 2) * 2;
+        }
+
+        draggingTile.style.left = `${newLeft}px`;
+        draggingTile.style.top = `${newTop}px`;
+    }
+
+    if(resizingTile){
+
+        const tileRect = resizingTile.getBoundingClientRect();
+
+        let newWidth = e.clientX - tileRect.left;
+        let newHeight = e.clientY - tileRect.top;
+
+        if(snapMode){
+            newWidth = Math.round(newWidth / 2) * 2;
+            newHeight = Math.round(newHeight / 2) * 2;
+        }
+
+        resizingTile.style.width = `${newWidth}px`;
+        resizingTile.style.height = `${newHeight}px`;
+    }
+});
+
+window.addEventListener('mouseup', ()=>{
+    draggingTile = null;
+    resizingTile = null;
+});
+
+function toggleSnapMode(){
+    snapMode = !snapMode;
+    alert(`Snap Mode ${snapMode ? 'Enabled' : 'Disabled'}`);
+}
+
+function duplicateTileRight(){
+
+    if(!selectedTile) return;
+
+    const clone = selectedTile.cloneNode(true);
+
+    clone.style.left = `${parseFloat(selectedTile.style.left) + parseFloat(selectedTile.style.width) + 8}px`;
+    clone.style.top = selectedTile.style.top;
+
+    attachTileEvents(clone);
+    wrap.appendChild(clone);
+
+    selectedTile = clone;
+}
+
+function duplicateTileDown(){
+
+    if(!selectedTile) return;
+
+    const clone = selectedTile.cloneNode(true);
+
+    clone.style.left = selectedTile.style.left;
+    clone.style.top = `${parseFloat(selectedTile.style.top) + parseFloat(selectedTile.style.height) + 8}px`;
+
+    attachTileEvents(clone);
+    wrap.appendChild(clone);
+
+    selectedTile = clone;
+}
+
+function attachTileEvents(tile){
+
+    tile.addEventListener('mousedown', (e)=>{
+
+        if(!adminMode) return;
+
+        e.preventDefault();
+        e.stopPropagation();
+
+        // SHIFT = multi select
+        if(e.shiftKey){
+
+            tile.classList.toggle('multi-selected');
+
+            if(tile.classList.contains('multi-selected')){
+                if(!highlightedTiles.includes(tile)){
+                    highlightedTiles.push(tile);
+                }
+            }else{
+                highlightedTiles = highlightedTiles.filter(t => t !== tile);
+            }
+
+            return;
+        }
+
+        // Normal selection
+        document.querySelectorAll('.tile').forEach(t => t.classList.remove('selected'));
+
+        selectedTile = tile;
+        selectedTile.classList.add('selected');
+
+        // Resize handle
+        if(e.target.classList.contains('resize-handle')){
+            resizingTile = tile;
+            return;
+        }
+
+        draggingTile = tile;
+        dragOffsetX = e.offsetX;
+        dragOffsetY = e.offsetY;
+});
+
+    tile.addEventListener('click', (e)=>{
+
+        // Admin mode disables colour changing
+        if(adminMode){
+            e.preventDefault();
+            e.stopPropagation();
+            return;
+        }
+
+        // Normal mode colour cycle
+        let s = Number(tile.dataset.state || 0);
+        s = (s + 1) % 4;
+        tile.dataset.state = s;
+
+        tile.classList.remove('red','blue','split');
+
+        if(s === 1){
+            tile.classList.add('red');
+        }
+        else if(s === 2){
+            tile.classList.add('blue');
+        }
+        else if(s === 3){
+            tile.classList.add('split');
+        }
+});
+}
+
+function saveLayout(){
+
+    const data = [];
+
+    document.querySelectorAll('.tile').forEach(tile => {
+        data.push({
+            left: tile.style.left,
+            top: tile.style.top,
+            width: tile.style.width,
+            height: tile.style.height
+        });
+    });
+
+    localStorage.setItem('karmazaTileLayout', JSON.stringify(data));
+
+    alert('Layout Saved');
+}
+
+function copyTile(){
+
+    if(!selectedTile){
+        alert('Select a tile first');
+        return;
+    }
+
+    copiedTileData = {
+        width: selectedTile.style.width,
+        height: selectedTile.style.height,
+        left: selectedTile.style.left,
+        top: selectedTile.style.top
+    };
+
+    alert('Tile size copied');
+}
+
+function pasteTile(){
+
+    if(!selectedTile){
+        alert('Select a tile first');
+        return;
+    }
+
+    if(!copiedTileData){
+        alert('No copied tile data');
+        return;
+    }
+
+    selectedTile.style.width = copiedTileData.width;
+    selectedTile.style.height = copiedTileData.height;
+
+    selectedTile.classList.add('pasted-flash');
+
+    setTimeout(()=>{
+        selectedTile.classList.remove('pasted-flash');
+    },700);
+
+    alert('Tile size pasted');
+}
+
+function createGridFromTile(){
+
+    if(!selectedTile){
+        alert('Select a tile first');
+        return;
+    }
+
+    if(gridContainer){
+        gridContainer.remove();
+    }
+
+    gridContainer = document.createElement('div');
+    gridContainer.style.position = 'absolute';
+    gridContainer.style.left = selectedTile.style.left;
+    gridContainer.style.top = selectedTile.style.top;
+    gridContainer.style.cursor = 'move';
+    gridContainer.style.zIndex = '20';
+
+    const baseW = parseFloat(selectedTile.style.width);
+    const baseH = parseFloat(selectedTile.style.height);
+
+    const spacingX = baseW + 8;
+    const spacingY = baseH + 8;
+
+    for(let row = 0; row < 5; row++){
+        for(let col = 0; col < 5; col++){
+
+            const clone = document.createElement('div');
+            clone.className = 'tile';
+            clone.style.position = 'absolute';
+            clone.style.left = `${col * spacingX}px`;
+            clone.style.top = `${row * spacingY}px`;
+            clone.style.width = selectedTile.style.width;
+            clone.style.height = selectedTile.style.height;
+            clone.dataset.state = 0;
+
+            const handle = document.createElement('div');
+            handle.className = 'resize-handle';
+            clone.appendChild(handle);
+
+            clone.addEventListener('mousedown', (e)=>{
+
+                if(adminMode){
+
+                    if(e.target.classList.contains('resize-handle')){
+                        resizingTile = clone;
+                        e.stopPropagation();
+                        return;
+                    }
+
+                    document.querySelectorAll('.tile').forEach(t => t.classList.remove('selected'));
+                    selectedTile = clone;
+                    selectedTile.classList.add('selected');
+                    draggingTile = clone;
+                    dragOffsetX = e.offsetX;
+                    dragOffsetY = e.offsetY;
+                    return;
+                }
+            });
+
+            clone.addEventListener('click', (e)=>{
+
+                if(adminMode){
+                    e.stopPropagation();
+                    document.querySelectorAll('.tile').forEach(t => t.classList.remove('selected'));
+                    selectedTile = clone;
+                    selectedTile.classList.add('selected');
+                    return;
+                }
+
+                let s = Number(clone.dataset.state);
+                s = (s + 1) % 4;
+                clone.dataset.state = s;
+
+                clone.classList.remove('red','blue','split');
+
+                if(s === 1){
+                    clone.classList.add('red');
+                }
+                else if(s === 2){
+                    clone.classList.add('blue');
+                }
+                else if(s === 3){
+                    clone.classList.add('split');
+                }
+            });
+
+            gridContainer.appendChild(clone);
+        }
+    }
+
+    wrap.appendChild(gridContainer);
+
+    gridContainer.addEventListener('mousedown', ()=>{
+        draggingGrid = true;
+    });
+
+    window.addEventListener('mouseup', ()=>{
+        draggingGrid = false;
+    });
+
+    window.addEventListener('mousemove', (e)=>{
+
+        if(!draggingGrid) return;
+
+        const rect = wrap.getBoundingClientRect();
+
+        gridContainer.style.left = `${e.clientX - rect.left}px`;
+        gridContainer.style.top = `${e.clientY - rect.top}px`;
+    });
+
+    alert('5x5 Grid Created');
+}
+
+function deleteHighlightedTiles(){
+
+    if(highlightedTiles.length === 0){
+        alert('No highlighted tiles');
+        return;
+    }
+
+    highlightedTiles.forEach(tile => tile.remove());
+
+    highlightedTiles = [];
+
+    alert('Highlighted tiles deleted');
+}
+
+function deleteTile(){
+
+    if(!selectedTile){
+        alert('Select a tile first');
+        return;
+    }
+
+    selectedTile.remove();
+    selectedTile = null;
+
+    alert('Tile deleted');
+}
+
+function loadLayout(){
+
+    const data = JSON.parse(localStorage.getItem('karmazaTileLayout'));
+
+    if(!data) return;
+
+    const tiles = document.querySelectorAll('.tile');
+
+    data.forEach((saved, i) => {
+
+        if(!tiles[i]) return;
+
+        tiles[i].style.left = saved.left;
+        tiles[i].style.top = saved.top;
+        tiles[i].style.width = saved.width;
+        tiles[i].style.height = saved.height;
+    });
+
+    alert('Layout Loaded');
+}
+
+if(board.complete){
+    createTiles();
+}else{
+    board.onload = createTiles;
+}
+</script>
+</body>
+</html>
